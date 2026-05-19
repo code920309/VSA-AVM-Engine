@@ -1,0 +1,20 @@
+[GitHub에서 가져온 후 대용량 파일 원상복구 가이드]
+
+집에 도착하신 후, 아래의 3줄 파이썬 코드를 실행하면 분할 및 압축된 자산들을 
+기존의 원본 크기(nationwide_RHTrade_enriched.csv 및 property_embeddings.npy)로 완벽히 복원할 수 있습니다!
+
+========================================================================
+# 1. 실거래 CSV 압축 풀기
+import zipfile
+with zipfile.ZipFile('data/processed/nationwide_RHTrade_enriched.zip', 'r') as zf:
+    zf.extractall('data/processed/')
+
+# 2. 지하철 임베딩 분할 파일 로드 및 합치기
+import numpy as np
+part1 = np.load('data/processed/property_embeddings_part1.npz')['embeddings']
+part2 = np.load('data/processed/property_embeddings_part2.npz')['embeddings']
+merged = np.vstack([part1, part2])
+np.save('data/processed/property_embeddings.npy', merged)
+
+print("Original enriched.csv and property_embeddings.npy reconstituted successfully!")
+========================================================================

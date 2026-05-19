@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# AVM Proptech Pipeline - Large Datasets Exclusions for GitHub (Over 100MB)
+data/processed/nationwide_RHTrade_enriched.csv
+data/processed/nationwide_RHTrade_processed.csv
+data/processed/property_embeddings.npy
+data/raw/
