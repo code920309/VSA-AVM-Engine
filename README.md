@@ -154,8 +154,15 @@ python prepare_github_assets.py
   * `.gitignore` 설정에 의해 원본 대용량 파일(`*.csv`, `*.npy`)은 안전하게 무시되고, 압축/분할된 규격 파일들만 Git 스테이징에 업로드됩니다.
 
 ### 2. 원격지(집 등)에서 초간단 복구 복원 방법
-집에서 깃 클론을 하신 뒤 아래의 **3줄 파이썬 코드**를 실행하면 원본 대용량 실거래 테이블과 128차원 밀집 임베딩 행렬로 완벽하게 복구(Reconstitute)됩니다.
 
+집에서 `git pull` 혹은 `git clone`을 받으신 뒤, 아래의 **터미널 1줄 파이썬 코드**를 가동해 주시면 457MB 고성능 NPY 임베딩과 실거래 원본 테이블이 완벽하게 복원됩니다.
+
+#### [방법 A] 터미널 1줄 명령어로 초고속 복구
+```bash
+python -c "import zipfile, numpy as np; zf = zipfile.ZipFile('data/processed/nationwide_RHTrade_enriched.zip', 'r'); zf.extractall('data/processed/'); p1 = np.load('data/processed/property_embeddings_part1.npz')['embeddings']; p2 = np.load('data/processed/property_embeddings_part2.npz')['embeddings']; np.save('data/processed/property_embeddings.npy', np.vstack([p1, p2])); print('🎉 원본 데이터 복원 완료!')"
+```
+
+#### [방법 B] 파이썬 스크립트 작성 복구 (3줄 요약)
 ```python
 # 1. 대용량 실거래 CSV 압축 해제
 import zipfile
@@ -171,3 +178,7 @@ np.save('data/processed/property_embeddings.npy', merged)
 
 print("Original enriched.csv and property_embeddings.npy reconstituted successfully!")
 ```
+
+#### 3. 복원 완료 최종 데이터셋 규격 확인
+* [`data/processed/nationwide_RHTrade_enriched.csv`](file:///c:/VSA-AVM-Engine/data/processed/nationwide_RHTrade_enriched.csv) (**132.35 MB** ➡️ 복구 확인)
+* [`data/processed/property_embeddings.npy`](file:///c:/VSA-AVM-Engine/data/processed/property_embeddings.npy) (**457.44 MB** ➡️ 복구 확인)
