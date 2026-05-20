@@ -1,18 +1,21 @@
-# 🏡 AppraisalAI Suite: VSA-AVM-Engine
+# AppraisalAI Suite: VSA-AVM-Engine
 
-[![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg?style=for-the-badge&logo=python)](https://www.python.org/)
-[![Pandas](https://img.shields.io/badge/pandas-2.0+-darkgreen.svg?style=for-the-badge&logo=pandas)](https://pandas.pydata.org/)
-[![NumPy](https://img.shields.io/badge/numpy-1.22+-blue.svg?style=for-the-badge&logo=numpy)](https://numpy.org/)
-[![Scikit-Learn](https://img.shields.io/badge/scikit--learn-1.0+-orange.svg?style=for-the-badge&logo=scikit-learn)](https://scikit-learn.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
+신속하고 정확한 연립-다세대 가치 산정을 위한 전국 단위 데이터 엔지니어링 및 AVM 파이프라인
 
-**VSA-AVM-Engine**은 대한민국 전국 단위의 연립·다세대 실거래가 데이터를 수집, 정제하고 카카오 로컬 API와 국토교통부 건축물대장 API를 융합하여 결측치 0%를 달성하는 **초정밀 프롭테크 데이터 엔지니어링 및 임베딩 추출 파이프라인**입니다. 
+## 목차
+1. [전체 파이프라인 아키텍처](#1-전체-데이터-및-인텔리전스-파이프라인-아키텍처)
+2. [핵심 데이터 엔지니어링 기술](#2-핵심-데이터-엔지니어링-기술-스펙)
+3. [모델 성능 및 시각화 분석](#3-모델-성능-비교-및-시각화-분석)
+4. [모델 사용법 및 필수 요소](#4-모델-사용법-및-필수-요소)
+5. [트러블슈팅 및 장애 극복기](#5-트러블슈팅-및-장애-극복기)
+6. [GitHub 대용량 파일 복구 가이드](#6-github-대용량-파일-복구-가이드)
+7. [향후 계획 (Future Roadmap)](#7-향후-계획-future-roadmap)
 
 ---
 
-## 🗺️ 전체 데이터 파이프라인 아키텍처 (End-to-End Pipeline)
+## 1. 전체 데이터 및 인텔리전스 파이프라인 아키텍처
 
-총 5가지 모듈식 컴포넌트로 분할 설계되어 점진적인 데이터 정밀화 및 벡터 연산 압축을 완수합니다.
+총 7가지 모듈식 컴포넌트로 구성되어 데이터 수집부터 고도화된 모델 학습까지의 전 과정을 완수합니다.
 
 ```mermaid
 graph TD
@@ -24,161 +27,113 @@ graph TD
     F --> G[integrate_subway_haversine.py]
     G -->|4. 896개 역사 Centroid DB & 하버사인 연산| H(nationwide_RHTrade_enriched.csv)
     H --> I[preprocess_and_embed.py]
-    I -->|5. 시계열 분할 / 초고속 LLM Context화 / LSA 임베딩| J(processed_data.parquet)
-    I -->|6. 128차원 벡터 행렬 저장| K(property_embeddings.npy)
+    I -->|5. 시계열 분할 / 초고속 LSA 임베딩| J(processed_data.parquet)
+    J --> K[engineer_vsa_features.py]
+    K -->|6. 도메인 결측치 보강 및 피처 엔지니어링| L(final_features.csv)
+    L --> M[train_vsa_advanced.py]
+    M -->|7. LightGBM 고도화 모델 학습 및 평가| N(Advanced AVM Model)
 ```
 
 ---
 
-## ⚡ 핵심 데이터 엔지니어링 기술 스펙 (Technical Highlights)
+## 2. 핵심 데이터 엔지니어링 기술 스펙
 
-### 1. 카카오 API 다중 키 오타 교정 & 한도 감지 세이프 가드
+### 1. 카카오 API 다중 키 오타 교정 및 한도 감지 세이프 가드
 * **모듈**: `add_kakao_info_patched.py`
-* **기술 설명**: 카카오 로컬 API 호출 한도 도달 시 `HTTP 429`가 아닌 `HTTP 400` 커스텀 바디를 수신하는 예외를 규명하여 자동으로 다음 키로 회전(Switching)하는 키 관리자를 설계했습니다. 또한 윈도우 환경 특유의 소켓 포트 고갈 에러(`WinError 10048`)를 해결하고자 `requests.Session` 커넥션 풀링을 도입했습니다.
-* **성과**: 위경도 좌표 결측치를 기존 45.11%에서 **단 0.07% (물리적 무효 주소 40건 제외 0.00%)**로 전면 소거했습니다.
+* **기술 설명**: 카카오 로컬 API 호출 한도 도달 시 자동으로 다음 키로 회전하는 관리자를 설계했습니다. 또한 윈도우 환경 특유의 소켓 포트 고갈 에러를 해결하고자 커넥션 풀링을 도입했습니다.
+* **성과**: 위경도 좌표 결측치를 0.07% 이내로 전면 소거했습니다.
 
-### 2. 전국 896개 역사 Centroid DB 및 하버사인(Haversine) 최단거리 연산
+### 2. 전국 896개 역사 Centroid DB 및 하버사인 최단거리 연산
 * **모듈**: `integrate_subway_haversine.py`
-* **기술 설명**: 카카오 API의 1km 반경 탐색 제한으로 인해 누락된 204,087건의 매물 데이터에 대해, 이미 수집된 실거래 데이터들로부터 역사 인접 매물 좌표의 **공간적 무게중심(Centroid)**을 구해 **전국 896개 지하철 역사 마스터 DB**를 동적으로 재구축했습니다.
-* **최적화**: 20만 건의 매물과 896개 지하철역 간의 최단거리 연산(약 1억 8천만 번의 연산)을 **NumPy 브로드캐스팅 및 청크 분할 기법**으로 고성능 벡터화하여, **단 25.29초 만에 100% 대치를 완수**했습니다.
+* **기술 설명**: 카카오 API의 1km 반경 탐색 제한으로 누락된 매물 데이터에 대해, 실거래 데이터들로부터 역사 인접 매물 좌표의 공간적 무게중심(Centroid)을 구해 전국 역사 마스터 DB를 동적으로 재구축했습니다.
+* **최적화**: 1억 8천만 번의 하버사인 연산을 NumPy 브로드캐스팅 기법으로 고성능 벡터화하여 단 25초 만에 완수했습니다.
 
-### 3. 시계열 데이터 누수(Data Leakage) 원천 차단 아키텍처
+### 3. 데이터 결측치 정밀 정리 및 보강 (Data Imputation)
+* **모듈**: `engineer_vsa_features.py`
+* **도메인 기반 대체**: 
+    * 주차 비율: 법정동별 평균값 또는 기본값(0.5)으로 보정
+    * 엘리베이터: 2015년 건축물관리법 강화를 기준으로 건축년도 기반 논리적 대체
+    * 총 층수: 매물 층수 정보와의 정합성 검증 및 보완
+* **노이즈 정제**: `houseType` 내 '연립다세대' 혼합 텍스트를 '연립'으로 통일하여 데이터 희소성 문제를 해결했습니다.
+
+### 4. 시계열 데이터 누수(Data Leakage) 차단 및 임베딩
 * **모듈**: `preprocess_and_embed.py`
-* **기술 설명**: 머신러닝 및 Appraisal AI 모델 학습을 위해 전체 실거래를 거래일자(`deal_date`) 기준으로 엄격하게 오름차순 정렬했습니다. 과거 80%(`2025-04-16` 이전)를 기준으로 Train/Test 분할을 수행한 뒤, **오직 Train 데이터 기준으로만** `RobustScaler`와 `LabelEncoder`를 학습(Fit)시키고 전체 데이터에 적용(Transform)하여 미래의 통계치가 과거로 유입되는 누수를 완벽 차단했습니다.
-
-### 4. LLM 임베딩 자연어 Context화 & 로컬 LSA 임베딩 추출
-* **모듈**: `preprocess_and_embed.py`
-* **초고속 직렬화**: 루프를 제거한 판다스 벡터 문자열 결합 로직으로 **4.6초 만에 48만 건의 고도화된 매물별 설명 문장 생성**을 완료했습니다.
-  > *예시: "서울시 종로구 이화동에 위치한 다세대 주택 젬스톤입니다. 2021년에 건축되었으며, 전용면적은 57.0m2... 가장 가까운 지하철역은 혜화역 4호선이며 거리는 577m입니다..."*
-* **자원 최적화 (LSA)**: 수백만 원 상당의 유료 임베딩 API 요금을 소거하기 위해, 로컬 TF-IDF 희소 행렬 연산과 `TruncatedSVD` 분해 기법을 결합하여 **128차원의 고밀도 시맨틱 임베딩 행렬(property_embeddings.npy, 479.6MB)**을 단 **71.94초** 만에 물리 장치에서 직접 연산 및 밀집 추출했습니다.
+* **시계열 분할**: 거래일자 기준 엄격한 오름차순 정렬 후 8:2 분할을 적용하여 미래 정보의 유입을 원천 차단했습니다.
+* **LSA 임베딩**: TF-IDF와 TruncatedSVD를 활용하여 128차원의 고밀도 시맨틱 임베딩 행렬을 로컬에서 직접 연산했습니다.
 
 ---
 
-## 📁 최종 가공 데이터 사양
+## 3. 모델 성능 비교 및 시각화 분석
 
-전처리가 완료된 정형 데이터셋과 밀집 벡터 행렬은 아래와 같이 저장되어 서빙 및 예측 모델로 직접 주입됩니다.
+Baseline 모델에서 출발하여 도메인 지식을 투입한 고도화 모델까지의 성능 개선 및 분석 결과입니다.
 
-| 파일 이름 | 용량 | 인코딩 / 특징 | 용도 |
-| :--- | :---: | :--- | :--- |
-| [`processed_data.parquet`](file:///c:/VSA-AVM-Engine/data/processed/processed_data.parquet) | **63.4 MB** | Parquet / 기존 CSV 대비 **54% 용량 압축** 및 타입 보존 | AVM 가치산정 모델 학습 |
-| [`property_embeddings.npy`](file:///c:/VSA-AVM-Engine/data/processed/property_embeddings.npy) | **479.6 MB** | NumPy Binary / **128차원 밀집 시맨틱 벡터** | Vector DB 및 다차원 검색 |
-| [`label_encoders.pkl`](file:///c:/VSA-AVM-Engine/data/processed/label_encoders.pkl) | **78.7 KB** | pickle / 범주형 인코딩 사전 객체 | API 서빙시 실시간 매핑 |
-| [`robust_scaler.pkl`](file:///c:/VSA-AVM-Engine/data/processed/robust_scaler.pkl) | **628 B** | pickle / 연속형 피처 Robust 스케일러 | API 서빙시 입력 정규화 |
+### 1. 성능 지표 결과
+| 모델 단계 | R2 Score | MAE (원) | MAPE (%) | 특이사항 |
+| :--- | :---: | :---: | :---: | :--- |
+| **Baseline v1.0** | 0.8650 | 751,910 | 15.81% | 기본 11개 피처 사용 |
+| **Advanced v1.2** | **0.8824** | **691,694** | **14.57%** | 도메인 피처 및 Early Stopping 적용 |
 
----
+### 2. 고도화 모델 분석 시각화
+모델의 설명력과 피처 기여도를 시각적으로 분석한 결과입니다.
 
-## 🛠️ 실행 및 구동 가이드 (Usage Guide)
+#### [예측 정확도 분석 (Actual vs Predicted)]
+실제 거래가와 모델 예측가의 일치도를 보여줍니다. 대각선에 점들이 밀집될수록 높은 정확도를 의미합니다.
+![Advanced Prediction Analysis](./visuals/advanced_pred_vs_actual.png)
 
-파이프라인의 각 구성 스크립트는 터미널에서 순차적으로 가동할 수 있습니다.
+#### [피처 중요도 분석 (Feature Importance)]
+부동산 가치 산정에 있어 어떤 변수가 가장 지배적인 영향력을 행사하는지 나타냅니다.
+![Advanced Feature Importance](./visuals/advanced_feature_importance.png)
 
-### 1단계: 실거래가 비동기 다운로드 및 1차 정제
-```bash
-python fetch_nationwide_data.py
-python process_rh_trade.py
-```
-
-### 2단계: 카카오 API 위경도 좌표 및 한도 스위칭 수집
-```bash
-python add_kakao_info_patched.py
-```
-
-### 3단계: 전국 896개 역사 Centroid 하버사인 최단거리 연산 융합
-```bash
-python integrate_subway_haversine.py
-```
-
-### 4단계: 시계열 누수 방지 전처리 및 128차원 로컬 시맨틱 임베딩 추출
-```bash
-python preprocess_and_embed.py
-```
+#### [오차 분포 분석 (Error Distribution)]
+오차율(MAPE)의 분포를 확인하여 예측의 안정성을 검증합니다.
+![Error Distribution](./visuals/error_distribution.png)
 
 ---
 
-## 💎 파이프라인 가동 결과 검증 (Quality Control)
+## 4. 모델 사용법 및 필수 요소
 
-최종 데이터셋(`processed_data.parquet`)의 핵심 인프라 변수 결측 분석 결과:
+학습된 Advanced AVM 모델을 활용하기 위한 필수 데이터 처리 규격입니다.
 
-* **위도 (`lat`) 결측률**: **0.07%** (주소 불일치 거래 40건 제외 **0.00%**)
-* **경도 (`lng`) 결측률**: **0.07%** (주소 불일치 거래 40건 제외 **0.00%**)
-* **지하철 이름 (`subway_name`) 결측률**: **0.07%** (하버사인 최단거리 대치 완료)
-* **지하철 거리 (`subway_dist`) 결측률**: **0.07%** (하버사인 최단거리 대치 완료)
-* **전체 정형 피처 (has_elevator, total_floors, approval_date 등) 결측률**: **0.00%** (건축물대장 융합 완결)
+### 1. 필수 입력 피처 목록
+- **건물 특성**: 전용면적(excluUseAr), 대지면적(landAr), 층수(floor), 연식(Age), 총층수(total_floors), 엘리베이터(has_elevator), 주차비율(parking_ratio)
+- **입지 지표**: 법정동 인코딩(umdNm_encoded), 지하철 거리(subway_dist), 공시지가 지수(land_index)
 
----
-
-## 🛠️ 트러블슈팅 및 장애 극복기 (Troubleshooting Log)
-
-대규모 데이터 수집 및 고성능 기계학습 전처리 파이프라인 구축 시 직면한 **5대 핵심 병목과 해결방안**을 기록합니다.
-
-### 1. 카카오 API Key 오타 및 401 Unauthorized 오류
-* **현상**: 카카오 로컬 API 호출 시 간헐적으로 `401 Unauthorized` 에러가 발생해 수집기가 가동을 중단하는 문제 발생.
-* **원인**: 제공된 3개의 카카오 API 키 중 3번 키 값에서 숫자 **`7`**이 누락된 오타(`f3f371a...` ➡️ 실제 유효 키: `f3f3717a...`)가 존재했음을 교차 대조를 통해 규명했습니다.
-* **해결**: 오류가 있던 3번 키의 스펠링을 정상 교정하고 멀티 키 로테이션 모듈에 통합하여 수집 안정성을 즉시 확보했습니다.
-
-### 2. 카카오 API 한도 초과 오류 미감지 현상 (HTTP 400 특성)
-* **현상**: 카카오 API의 일일 호출 한도(10만 건) 초과 시 일반적인 `HTTP 429 (Too Many Requests)`가 아닌 **`HTTP 400 Bad Request`**를 반환하여, 수집기가 키를 교체하지 못하고 공백 데이터를 계속 기록하는 문제 발생.
-* **원인**: 카카오 로컬 API는 한도 소진 시 `HTTP 400` 상태 코드와 함께 JSON 바디의 `"message"` 또는 `"msg"` 키 내부에 `"limit"`이 포함된 메시지를 반환하는 특이 규격을 가졌습니다.
-* **해결**: API 수신 블록에서 HTTP 응답 메시지 내에 `"limit"` 또는 `"exceeded"` 문자열이 포함되어 있는지 정밀 감사하는 로직을 추가하여, 한도 도달 즉시 다음 키로 세션 로테이션을 자동 트리거하게 구현했습니다.
-
-### 3. 윈도우 OS 소켓 포트 고갈 에러 (WinError 10048)
-* **현상**: 수십만 건의 API를 멀티스레드로 급격히 호출할 때, `OSError: [WinError 10048] 보통 각 소켓 주소(프로토콜/네트워크 주소/포트)는 하나만 사용할 수 있습니다` 에러와 함께 수집 속도가 급락하는 현상 발생.
-* **원인**: 윈도우 환경 특성상 매번 개별 HTTP 요청을 위해 신규 소켓 커넥션을 맺고 끊을 때, 해제된 소켓이 `TIME_WAIT` 상태로 유지되면서 OS의 사용 가능한 Ephemeral 포트가 일시적으로 완전 고갈되어 발생했습니다.
-* **해결**: 매 요청마다 새로운 연결을 생성하는 대신, `requests.Session()`과 `HTTPAdapter(pool_connections=10, pool_maxsize=10)` 설정을 결합하여 **커넥션 풀링(Connection Pooling)** 및 기존 소켓 커넥션을 무한 재사용하도록 전환함으로써 에러를 원천 봉쇄했습니다.
-
-### 4. 지하철 1km 반경 탐색 제한으로 인한 대규모 결측치 발생
-* **현상**: 카카오 로컬 카테고리 API(SW8)는 성능 및 비용상 1km 반경 제한을 가짐으로써, 1km 밖에 위치한 지방/외곽 주택 거래 데이터 **204,087건**에 대해 대규모 지하철 결측이 발생하는 한계 봉착.
-* **원인**: 카카오 Category API의 무제한 반경 확장은 불필요한 트래픽 낭비와 호출 지연을 초래합니다.
-* **해결**: 별도의 리포지토리에 의존하지 않고, 비결측 데이터에서 고유 지하철역별 매물 위경도의 **공간적 무게중심(Centroid)**을 실시간 연산하여 **전국 896개 역사 좌표 마스터 DB**를 동적으로 재구축했습니다. 이후 **NumPy 브로드캐스팅 벡터 연산**을 적용하여 1억 8천만 쌍의 하버사인 거리 계산을 단 25초 만에 완수, 지하철 결측률을 사실상 **0.00%**로 완전 소거했습니다.
-
-### 5. 미래 정보의 시간축 누수 (Data Leakage)
-* **현상**: 예측 모델의 검증 스코어는 매우 높게 나오나, 운영(Production) 서빙 단계에서 오차가 걷잡을 수 없이 커지는 전형적인 과적합 현상 발생.
-* **원인**: 실거래 데이터의 특성을 고려하지 않고 무작위 랜덤 분할(Random K-Fold)을 수행하여, 미래 시점의 전체 통계(평균, 중앙값, 이상치 스케일링 범위)가 과거 데이터 전처리에 녹아드는 누수가 발생했습니다.
-* **해결**: 데이터셋을 `deal_date` 기준으로 엄격하게 오름차순 정렬한 뒤 정확히 과거 80% 지점(`2025-04-16`)을 분할선으로 책정했습니다. 이후 **오직 Train 데이터 기준으로만 Robust 스케일러와 Label 인코더를 Fit** 시킨 후 Test 세트에 적용(Transform)하게 강제함으로써 시계열 정보 누수를 완벽하게 차단했습니다.
+### 2. 가공 로직
+1.  **입지 캡핑**: `subway_dist`를 최대 1,500m로 제한하여 비역세권 데이터의 편향을 방지합니다.
+2.  **거주성 감가**: 4층 이상 건물에 엘리베이터가 없는 경우 감가 피처를 1로 활성화합니다.
+3.  **로그 복원**: 모델 예측 결과물에 `np.expm1()`을 적용하여 실제 제곱미터당 금액으로 복원합니다.
 
 ---
 
-## 📦 GitHub 대용량 파일 (100MB 초과) 우회 및 복구 가이드 (Asset Bypass Guide)
+## 5. 트러블슈팅 및 장애 극복기
 
-GitHub은 단일 파일당 **100MB 제한**을 두고 있어, 원본 데이터 파일(`property_embeddings.npy`: 457.44 MB, `nationwide_RHTrade_enriched.csv`: 132.35 MB)을 그대로 푸시할 경우 레포지토리 푸시 거부 장애가 발생합니다.
+1. **카카오 API 키 오타 및 한도 미감지**: 401 및 400 에러 메시지 패턴 분석을 통한 자동 키 스위칭 모듈 개발로 수집 안정성을 확보했습니다.
+2. **윈도우 소켓 포트 고갈(WinError 10048)**: 반복적인 HTTP 커넥션 생성을 지양하고 `requests.Session()` 기반 커넥션 풀링을 통해 에러를 차단했습니다.
+3. **미계산 지역 지하철 결측**: 1km 외부 지역 매물에 대해 동적 역사 DB와 하버사인 벡터 연산을 적용하여 지하철 결측률을 사실상 소거했습니다.
 
-이를 완벽하게 해결하기 위해 **100MB 이하 스마트 자동 압축 및 분할 파이프라인**을 리포지토리에 이식했습니다.
+---
 
-### 1. 우회 전처리 및 압축 실행
-원격지(집 또는 연구실)로 푸시하기 전, 아래 스크립트를 가동하면 100MB가 넘는 자산들이 자동으로 안전 규격을 충족하도록 압축/분할됩니다.
+## 6. GitHub 대용량 파일 복구 가이드
+
+GitHub 100MB 제한을 우회하기 위한 데이터 복원 명령어입니다.
+
 ```bash
-python prepare_github_assets.py
-```
-* **변환 결과**:
-  * `nationwide_RHTrade_enriched.csv` (132.35 MB) ➡️ **`nationwide_RHTrade_enriched.zip` (21.21 MB)** (압축 성공)
-  * `property_embeddings.npy` (457.44 MB, float64) ➡️ float32 정밀도 변환 후 2분할 ➡️ **`property_embeddings_part1.npz` (75.42 MB)** & **`property_embeddings_part2.npz` (74.03 MB)** (완전 우회 성공)
-  * `.gitignore` 설정에 의해 원본 대용량 파일(`*.csv`, `*.npy`)은 안전하게 무시되고, 압축/분할된 규격 파일들만 Git 스테이징에 업로드됩니다.
-
-### 2. 원격지(집 등)에서 초간단 복구 복원 방법
-
-집에서 `git pull` 혹은 `git clone`을 받으신 뒤, 아래의 **터미널 1줄 파이썬 코드**를 가동해 주시면 457MB 고성능 NPY 임베딩과 실거래 원본 테이블이 완벽하게 복원됩니다.
-
-#### [방법 A] 터미널 1줄 명령어로 초고속 복구
-```bash
-python -c "import zipfile, numpy as np; zf = zipfile.ZipFile('data/processed/nationwide_RHTrade_enriched.zip', 'r'); zf.extractall('data/processed/'); p1 = np.load('data/processed/property_embeddings_part1.npz')['embeddings']; p2 = np.load('data/processed/property_embeddings_part2.npz')['embeddings']; np.save('data/processed/property_embeddings.npy', np.vstack([p1, p2])); print('🎉 원본 데이터 복원 완료!')"
+python -c "import zipfile, numpy as np, os; d='data/processed'; zf=zipfile.ZipFile(os.path.join(d, 'nationwide_RHTrade_enriched.zip'), 'r'); zf.extractall(d); p1=np.load(os.path.join(d, 'property_embeddings_part1.npz'))['embeddings']; p2=np.load(os.path.join(d, 'property_embeddings_part2.npz'))['embeddings']; np.save(os.path.join(d, 'property_embeddings.npy'), np.vstack([p1, p2])); print('Original Data Reconstituted Successfully')"
 ```
 
-#### [방법 B] 파이썬 스크립트 작성 복구 (3줄 요약)
-```python
-# 1. 대용량 실거래 CSV 압축 해제
-import zipfile
-with zipfile.ZipFile('data/processed/nationwide_RHTrade_enriched.zip', 'r') as zf:
-    zf.extractall('data/processed/')
+---
 
-# 2. 128차원 시맨틱 임베딩 분할 파일 병합 복원
-import numpy as np
-part1 = np.load('data/processed/property_embeddings_part1.npz')['embeddings']
-part2 = np.load('data/processed/property_embeddings_part2.npz')['embeddings']
-merged = np.vstack([part1, part2])
-np.save('data/processed/property_embeddings.npy', merged)
+## 7. 향후 계획 (Future Roadmap)
 
-print("Original enriched.csv and property_embeddings.npy reconstituted successfully!")
-```
+본 프로젝트는 단순 가치 산정을 넘어 데이터 기반의 종합 프롭테크 엔진으로 진화하기 위해 다음과 같은 고도화 계획을 가지고 있습니다.
 
-#### 3. 복원 완료 최종 데이터셋 규격 확인
-* [`data/processed/nationwide_RHTrade_enriched.csv`](file:///c:/VSA-AVM-Engine/data/processed/nationwide_RHTrade_enriched.csv) (**132.35 MB** ➡️ 복구 확인)
-* [`data/processed/property_embeddings.npy`](file:///c:/VSA-AVM-Engine/data/processed/property_embeddings.npy) (**457.44 MB** ➡️ 복구 확인)
+1. **실시간 유사 사례 검색 엔진 고도화 (`build_similarity_index.py`)**
+   - 현재 구축된 128차원 시맨틱 임베딩 인덱스를 기반으로, 사용자가 선택한 매물과 가장 닮은 상위 사례를 추출하여 제공하는 'AI 비교 사례 추천 서비스'를 정식 모듈화할 예정입니다.
+2. **벡터 데이터베이스(Vector DB) 연동**
+   - 정적으로 저장된 `.npy` 행렬을 Pinecone 또는 Milvus와 같은 벡터 DB로 이전하여 수백만 건의 데이터에서도 밀리초(ms) 단위의 고속 검색이 가능하도록 성능을 최적화할 계획입니다.
+3. **MLOps 파이프라인 구축**
+   - 새로운 실거래 데이터가 수집될 때마다 모델이 자동으로 재학습되고 배포되는 CI/CD 기반의 자동화 파이프라인을 구축하여 모델의 시의성을 확보할 예정입니다.
+
+---
+**최종 업데이트**: 2026-05-21
+**엔지니어링**: AppraisalAI Project Team

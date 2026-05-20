@@ -1,96 +1,75 @@
-"""
-File: prepare_github_assets.py
-Description: GitHub asset preparation and large file compression pipeline.
-             - Converts float64 semantic embeddings to float32 (reducing size by 50%).
-             - Splits the embedding array row-wise into 2 compressed chunks under the 100MB GitHub limit.
-             - Compresses the 138MB enriched CSV into a 21MB zip archive.
-             - Provides a 2-line recovery script to reconstitute all original files at home.
-"""
-
 import os
 import numpy as np
 import zipfile
 import time
+import math
 
-DATA_DIR = 'c:/VSA-AVM-Engine/data/processed'
-CSV_PATH = os.path.join(DATA_DIR, 'nationwide_RHTrade_enriched.csv')
-NPY_PATH = os.path.join(DATA_DIR, 'property_embeddings.npy')
+# 경로 설정
+DATA_DIR = 'data/processed'
+LIMIT_MB = 90  # 안전하게 90MB를 한도로 설정
 
-ZIP_CSV_PATH = os.path.join(DATA_DIR, 'nationwide_RHTrade_enriched.zip')
-NPZ_PART1 = os.path.join(DATA_DIR, 'property_embeddings_part1.npz')
-NPZ_PART2 = os.path.join(DATA_DIR, 'property_embeddings_part2.npz')
+def compress_csv(file_path):
+    zip_path = file_path.replace('.csv', '.zip')
+    print(f" > CSV 압축 중: {os.path.basename(file_path)} -> {os.path.basename(zip_path)}")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        zf.write(file_path, os.path.basename(file_path))
+    print(f"   완료: {os.path.getsize(zip_path)/(1024*1024):.1f} MB")
+
+def split_npy(file_path):
+    print(f" > NPY 분할 중: {os.path.basename(file_path)}")
+    arr = np.load(file_path)
+    # float32 변환 (정밀도 유지 및 용량 50% 절감)
+    if arr.dtype == np.float64:
+        arr = arr.astype(np.float32)
+    
+    # 예상 파일당 용량 계산 및 분할 수 결정
+    # float32는 4바이트/원소. 128차원 검색 행렬 기준
+    total_size_mb = arr.nbytes / (1024*1024)
+    num_parts = math.ceil(total_size_mb / LIMIT_MB)
+    rows_per_part = math.ceil(len(arr) / num_parts)
+    
+    base_name = os.path.basename(file_path).replace('.npy', '')
+    for i in range(num_parts):
+        start = i * rows_per_part
+        end = min((i + 1) * rows_per_part, len(arr))
+        part_arr = arr[start:end]
+        part_name = f"{base_name}_part{i+1}.npz"
+        part_path = os.path.join(DATA_DIR, part_name)
+        np.savez_compressed(part_path, embeddings=part_arr)
+        print(f"   Part {i+1} 저장: {part_name} ({os.path.getsize(part_path)/(1024*1024):.1f} MB)")
 
 def main():
-    print("--- [시작] 대용량 파일 GitHub 업로드용 압축 및 분할 파이프라인 ---")
-    start_time = time.time()
+    print("--- [시작] GitHub 대규모 자산 분할 및 압축 (v2.0) ---")
+    if not os.path.exists(DATA_DIR):
+        print(f"경로 없음: {DATA_DIR}")
+        return
+
+    files = os.listdir(DATA_DIR)
+    large_files = []
     
-    # 1. CSV 압축 (138MB -> ~21MB)
-    if os.path.exists(CSV_PATH):
-        print(f"1. 대용량 실거래 CSV 압축 중... ({os.path.basename(CSV_PATH)})")
-        t_start = time.time()
-        with zipfile.ZipFile(ZIP_CSV_PATH, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.write(CSV_PATH, os.path.basename(CSV_PATH))
-        print(f" > 완료: {os.path.getsize(ZIP_CSV_PATH) / (1024*1024):.2f} MB (소요시간: {time.time() - t_start:.2f}초)")
-    else:
-        print("[경고] CSV 파일이 존재하지 않습니다. 압축을 스킵합니다.")
+    for f in files:
+        f_path = os.path.join(DATA_DIR, f)
+        if os.path.isfile(f_path) and os.path.getsize(f_path) > 100 * 1024 * 1024:
+            large_files.append(f_path)
+            
+    if not large_files:
+        print("100MB 초과 파일을 찾을 수 없습니다.")
+        return
 
-    # 2. NPY 분할 및 float32 변환 압축 (457MB -> 2x 74.7MB)
-    if os.path.exists(NPY_PATH):
-        print(f"\n2. 대용량 NPY 임베딩 분할 및 float32 압축 중... ({os.path.basename(NPY_PATH)})")
-        t_start = time.time()
-        arr = np.load(NPY_PATH)
-        
-        # 16비트 유실 없는 float32 캐스팅 (용량 50% 절감)
-        arr_f32 = arr.astype(np.float32)
-        
-        # 행(Row) 기준으로 2개로 분할
-        n_rows = arr_f32.shape[0]
-        mid = n_rows // 2
-        
-        part1 = arr_f32[:mid]
-        part2 = arr_f32[mid:]
-        
-        # 각각 압축 보존
-        np.savez_compressed(NPZ_PART1, embeddings=part1)
-        np.savez_compressed(NPZ_PART2, embeddings=part2)
-        
-        print(f" > Part 1 완료: {os.path.getsize(NPZ_PART1) / (1024*1024):.2f} MB")
-        print(f" > Part 2 완료: {os.path.getsize(NPZ_PART2) / (1024*1024):.2f} MB")
-        print(f" > 총 소요시간: {time.time() - t_start:.2f}초")
-    else:
-        print("[경고] NPY 임베딩 파일이 존재하지 않습니다. 분할을 스킵합니다.")
-
-    # 3. 복원용 파이썬 스크립트 가이드 생성
-    readme_path = os.path.join(DATA_DIR, 'RECONSTITUTE_INSTRUCTIONS.txt')
-    instructions = """[GitHub에서 가져온 후 대용량 파일 원상복구 가이드]
-
-집에 도착하신 후, 아래의 3줄 파이썬 코드를 실행하면 분할 및 압축된 자산들을 
-기존의 원본 크기(nationwide_RHTrade_enriched.csv 및 property_embeddings.npy)로 완벽히 복원할 수 있습니다!
-
-========================================================================
-# 1. 실거래 CSV 압축 풀기
-import zipfile
-with zipfile.ZipFile('data/processed/nationwide_RHTrade_enriched.zip', 'r') as zf:
-    zf.extractall('data/processed/')
-
-# 2. 지하철 임베딩 분할 파일 로드 및 합치기
-import numpy as np
-part1 = np.load('data/processed/property_embeddings_part1.npz')['embeddings']
-part2 = np.load('data/processed/property_embeddings_part2.npz')['embeddings']
-merged = np.vstack([part1, part2])
-np.save('data/processed/property_embeddings.npy', merged)
-
-print("Original enriched.csv and property_embeddings.npy reconstituted successfully!")
-========================================================================
-"""
-    with open(readme_path, 'w', encoding='utf-8') as f:
-        f.write(instructions)
-    print(f"\n3. 복원 가이드 파일 생성 완료: {readme_path}")
+    print(f"발견된 대용량 파일: {len(large_files)}개")
     
-    end_time = time.time()
-    print(f"\n--- [완료] 모든 GitHub 친화적 압축 및 분할 완료 (총 소요시간: {end_time - start_time:.2f}초) ---")
-    print(" > [안내] 이제 data/processed/ 폴더 내부의 대용량 .csv와 .npy 원본 파일은 커밋하지 마시고,")
-    print(" > 생성된 .zip, .npz, .parquet 파일들만 편하게 깃허브에 푸시하시기 바랍니다!")
+    for f_path in large_files:
+        ext = os.path.splitext(f_path)[1].lower()
+        if ext == '.csv':
+            compress_csv(f_path)
+        elif ext == '.npy':
+            split_npy(f_path)
+        else:
+            print(f"스킵 (지원하지 않는 확장자): {f_path}")
+
+    print("\n--- [완료] 모든 자산의 GitHub 규격화 성공 ---")
+    print(" > 안내: 이제 생성된 .zip 및 .npz 파일들을 Git 스테이징에 추가(git add)하세요.")
+    print(" > 주의: 100MB 초과 원본 .csv와 .npy 파일은 .gitignore에 포함하거나 수동으로 제외해야 합니다.")
 
 if __name__ == '__main__':
     main()
