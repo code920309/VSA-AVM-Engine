@@ -9,7 +9,8 @@
 4. [모델 사용법 및 필수 요소](#4-모델-사용법-및-필수-요소)
 5. [트러블슈팅 및 장애 극복기](#5-트러블슈팅-및-장애-극복기)
 6. [GitHub 대용량 파일 복구 가이드](#6-github-대용량-파일-복구-가이드)
-7. [향후 계획 (Future Roadmap)](#7-향후-계획-future-roadmap)
+7. [실시간 가치 산정 워크플로우 (Integration Guide)](#8-실시간-가치-산정-워크플로우-integration-guide)
+8. [향후 계획 (Future Roadmap)](#7-향후-계획-future-roadmap)
 
 ---
 
@@ -55,11 +56,6 @@ graph TD
     * 엘리베이터: 2015년 건축물관리법 강화를 기준으로 건축년도 기반 논리적 대체
     * 총 층수: 매물 층수 정보와의 정합성 검증 및 보완
 * **노이즈 정제**: `houseType` 내 '연립다세대' 혼합 텍스트를 '연립'으로 통일하여 데이터 희소성 문제를 해결했습니다.
-
-### 4. 시계열 데이터 누수(Data Leakage) 차단 및 임베딩
-* **모듈**: `preprocess_and_embed.py`
-* **시계열 분할**: 거래일자 기준 엄격한 오름차순 정렬 후 8:2 분할을 적용하여 미래 정보의 유입을 원천 차단했습니다.
-* **LSA 임베딩**: TF-IDF와 TruncatedSVD를 활용하여 128차원의 고밀도 시맨틱 임베딩 행렬을 로컬에서 직접 연산했습니다.
 
 ---
 
@@ -123,7 +119,39 @@ python -c "import zipfile, numpy as np, os; d='data/processed'; zf=zipfile.ZipFi
 
 ---
 
-## 7. 향후 계획 (Future Roadmap)
+## 7. 실시간 가치 산정 워크플로우 (Integration Guide)
+
+프론트엔드 연동 및 실무 활용을 위한 5단계 표준 예측 프로세스입니다.
+
+### **Step 1. 주소 융합 및 좌표 확보 (Kakao API)**
+*   **Input**: 사용자 입력 주소 (예: "서울 종로구 이화동 28-34")
+*   **Logic**: `address.json` API 호출을 통해 위경도(lat, lng) 확보 및 법정동 코드(`sggCd`, `umdNm`) 추출
+
+### **Step 2. 인프라 분석 (Infrastructure)**
+*   **Logic**: 획득한 좌표 기반으로 `category.json` (SW8) 호출하여 최단거리 지하철역 정보(`subway_dist`) 획득
+*   **Note**: 1,500m 초과 시 1,500으로 캡핑 처리
+
+### **Step 3. 건물 물리 정보 확보 (Public Building Register API)**
+*   **Logic**: 주소(지번) 기반 건축물대장 API 호출
+*   **Extracted Data**: 
+    *   주차대수 / 총 가구수 → `parking_ratio` 계산
+    *   승강기 수 → `has_elevator` (1 or 0)
+    *   지상 층수 → `total_floors` 확보
+    *   사용승인일 → `Age` (현재 연도 - 건축 연도) 계산
+
+### **Step 4. 도메인 피처 전환 및 인코딩**
+*   **Area**: `excluUseAr` (전용면적)에 로그 변환 적용 권장
+*   **Encoding**: 사전에 학습된 `TargetEncoder` 또는 매핑 테이블을 사용하여 `umdNm_encoded` 값 부여
+*   **Logic**: (floor >= 4 and has_elevator == 0) 조건 확인하여 `is_high_floor_without_elevator` 생성
+
+### **Step 5. 모델 추론 및 결과 가치 복원**
+*   **Inference**: `advanced_avm_model.pkl` 로드 후 `predict()` 실행
+*   **Transformation**: 모델의 예측값(log)에 `np.expm1()` 적용
+*   **Output**: 단위 면적당 가액(원) → 최종 산정 가액 (단위 면적당 가액 * 전용면적)
+
+---
+
+## 8. 향후 계획 (Future Roadmap)
 
 본 프로젝트는 단순 가치 산정을 넘어 데이터 기반의 종합 프롭테크 엔진으로 진화하기 위해 다음과 같은 고도화 계획을 가지고 있습니다.
 
